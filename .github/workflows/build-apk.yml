@@ -1,0 +1,86 @@
+name: Build Android APK
+
+on:
+  # bisa dipicu manual dari GitHub UI (dengan input judul/deskripsi)
+  workflow_dispatch:
+    inputs:
+      app_title:
+        description: "Judul aplikasi (opsional)"
+        required: false
+        default: ""
+      app_description:
+        description: "Deskripsi aplikasi (opsional)"
+        required: false
+        default: ""
+  # bisa dipicu dari bot WA via GitHub API
+  repository_dispatch:
+    types: [build_apk]
+  # juga otomatis build kalau ada push ke file-file project
+  push:
+    branches: [ main ]
+    paths:
+      - "app/**"
+      - "gradle.properties"
+      - "settings.gradle*"
+      - "build.gradle*"
+      - "**/*.kt"
+      - "**/*.java"
+      - ".github/workflows/build-apk.yml"
+
+permissions:
+  contents: write   # biar bisa buat Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Pastikan gradlew executable
+        run: chmod +x gradlew
+
+      # Opsional: kalau user kirim judul dari workflow_dispatch, update label aplikasi di Manifest
+      - name: Set app label dari input (opsional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.app_title != '' }}
+        run: |
+          FILE="app/src/main/AndroidManifest.xml"
+          # hapus package= kalau masih ada (AGP baru pakai namespace dari Gradle, bukan package di manifest)
+          sed -i 's/ package="[^"]*"//' "$FILE" || true
+          # set android:label ke judul input
+          if grep -q 'android:label=' "$FILE"; then
+            sed -i 's/android:label="[^"]*"/android:label="${{ inputs.app_title }}"/' "$FILE"
+          else
+            sed -i 's/<application /<application android:label="${{ inputs.app_title }}" /' "$FILE"
+          fi
+
+      - name: Build Debug APK
+        run: ./gradlew --no-daemon clean :app:assembleDebug
+
+      - name: Upload artifact (untuk diunduh dari tab Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug.apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      - name: Publish GitHub Release (link publik)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: "APK Build #${{ github.run_number }}"
+          body: |
+            Otomatis build dari GitHub Actions.
+            Judul: ${{ inputs.app_title }}
+            Deskripsi: ${{ inputs.app_description }}
+          files: |
+            app/build/outputs/apk/debug/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
